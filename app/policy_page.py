@@ -145,8 +145,10 @@ if store is None:
     st.error("找不到資料儲存位置：請在 Secrets 設定 [google] 憑證（含 refresh_token），或設定環境變數 CHICAGO3_STORE。")
     st.stop()
 man = read_manifest(store)
-if not man.get("snapshot"):
-    st.warning("雲端硬碟 chicago3.0/_market 還沒有市場資料。請管理者在 GitHub Actions 執行 daily-sync（第一次約 20–40 分鐘）。")
+if not man.get("snapshot") or not man.get("tri_through") or not man.get("prices_through"):
+    n = len(man.get("prices_through", {}))
+    st.warning(f"雲端硬碟 chicago3.0/_market 的市場資料還沒同步完成（目前個股 {n} 檔）。"
+               "第一次同步要抓兩年資料，約 1–3 小時；完成後重新整理這一頁即可。")
     st.stop()
 
 # ① 選基金
