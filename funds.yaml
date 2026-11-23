@@ -1,0 +1,7 @@
+# 下拉選單的基金清單：國內股票型主動式 ETF，且有自動持股來源。
+# 其他基金用「上傳持股 CSV」。被動式 ETF 的指標是各自追蹤的指數（不是加權報酬指數），之後再加。
+funds:
+  - {code: 00981A, name: 主動統一台股增長, source: ezmoney, source_id: 49YTW}
+  - {code: 00403A, name: 主動統一升級50, source: ezmoney, source_id: 63YTW}
+  - {code: 00991A, name: 主動復華未來50, source: fhtrust, source_id: ETF23}
+  - {code: 00418A, name: 主動復華台灣新星, source: fhtrust, source_id: ETF27}

@@ -21,12 +21,22 @@ class Fund(BaseModel):
 
 class Data(BaseModel):
     root: str = "."
-    prices_dir: str                       # FinMind 個股檔：TaiwanStockPrice_<代號>.json、TaiwanStockDividendResult_<代號>.json
+    prices_dir: str | None = None         # FinMind 個股檔：TaiwanStockPrice_<代號>.json、TaiwanStockDividendResult_<代號>.json
+    prices_file: str | None = None        # 或：合併檔（sync 產生的 prices.parquet）
+    dividends_file: str | None = None     # 搭配 prices_file 的 dividends.parquet
     snapshot_dir: str                     # 證交所／櫃買當日快照（data/twse.py 的四個檔）
     tri_file: str                         # 加權報酬指數（FinMind TaiwanStockTotalReturnIndex）
     holdings_file: str | None = None      # 基金持股 CSV（type,code,name,weight_pct,shares）
     market: str = "上市"
     universe_top_n: int = Field(400, gt=0)
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if bool(self.prices_dir) == bool(self.prices_file):
+            raise ValueError("data 必須設定 prices_dir 或 prices_file（擇一）")
+        if self.prices_file and not self.dividends_file:
+            raise ValueError("使用 prices_file 時也要設定 dividends_file")
+        return self
 
     def path(self, p: str) -> Path:
         root = Path(os.environ.get("CHICAGO3_DATA", self.root))

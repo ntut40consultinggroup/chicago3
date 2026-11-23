@@ -3,6 +3,7 @@
   reconcile  重建指標並和官方加權報酬指數勾稽（差距超過門檻就失敗）
   policy     年度 SAA：容量、中性、均衡與觀點、政策、區間、TE 預算、基金現況；結果寫到 --out
   report     policy 加上穩健性、回溯歸因、監控；輸出試算表、政策組合書、效率前緣圖、區間圖
+  sync       下載並更新儲存層：chicago3 sync --store local:<資料夾>|gdrive [--funds funds.yaml]
 """
 import argparse
 import json
@@ -26,8 +27,28 @@ def _policy_table(o) -> pd.DataFrame:
     return t
 
 
+def sync_main(argv):
+    import os
+    from .storage import open_storage
+    from .sync import load_registry, run_sync
+    ap = argparse.ArgumentParser(prog="chicago3 sync", description="下載並更新儲存層（已經有的跳過）")
+    ap.add_argument("--store", required=True, help="local:<資料夾> 或 gdrive")
+    ap.add_argument("--funds", default="funds.yaml")
+    ap.add_argument("--start", default="2024-11-01")
+    ap.add_argument("--top", type=int, default=400)
+    ap.add_argument("--steps", default="snapshot,prices,tri,holdings")
+    a = ap.parse_args(argv)
+    out = run_sync(open_storage(a.store), load_registry(a.funds), a.start, a.top, os.environ.get("FINMIND_TOKEN"),
+                   tuple(a.steps.split(",")))
+    print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
+    return 0
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="chicago3", description="Chicago 3.0 SAA 政策組合工具")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["sync"]:
+        return sync_main(argv[1:])
+    ap = argparse.ArgumentParser(prog="chicago3", description="Chicago 3.0 SAA 政策組合工具（另有 chicago3 sync）")
     ap.add_argument("command", choices=["reconcile", "policy", "report"])
     ap.add_argument("config")
     ap.add_argument("--data-root")

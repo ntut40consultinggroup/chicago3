@@ -121,6 +121,27 @@ with tab_drive:
             else:
                 st.error(f"交換失敗：{r.status_code} {r.text[:300]}")
     else:
+        st.subheader("儲存層（chicago3 套件）")
+        c1, c2 = st.columns(2)
+        if c1.button("儲存層自我測試"):
+            from chicago3.storage import open_storage
+            store = open_storage("gdrive", cfg)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            store.write_text(f"_selftest/{stamp}.txt", "chicago3 storage ok")
+            ok = store.read_text(f"_selftest/{stamp}.txt") == "chicago3 storage ok"
+            (st.success if ok else st.error)(f"寫入、讀回{'一致' if ok else '不一致'}；_selftest 內有 {len(store.list('_selftest'))} 個檔")
+        if c2.button("顯示同步狀態"):
+            from chicago3.storage import open_storage
+            from chicago3.sync import latest_holdings, read_manifest
+            store = open_storage("gdrive", cfg)
+            man = read_manifest(store)
+            if not man:
+                st.info("chicago3.0/_market 還沒有資料：請先在 GitHub Actions 執行 daily-sync。")
+            else:
+                st.write({k: man.get(k) for k in ("updated_at", "snapshot", "tri_through", "prices_failed")})
+                st.write({"個股檔數": len(man.get("prices_through", {}))})
+            st.write({f: latest_holdings(store, f) for f in store.list("") if not f.startswith("_")})
+        st.divider()
         if st.button("建立 chicago3.0 資料夾並寫入測試檔"):
             try:
                 tok = token_from_refresh(cfg)

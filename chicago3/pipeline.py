@@ -22,17 +22,30 @@ class MarketData:
     flags: dict = field(default_factory=dict)   # 代號 → 跳空修正天數
 
 
+def _stock_series(cfg: Config, codes: list[str]):
+    """逐檔產生 (代號, (r, rcap, flags, 成交值))：來源是個股 JSON 資料夾或合併 parquet。"""
+    d = cfg.data
+    if d.prices_dir:
+        pdir = d.path(d.prices_dir)
+        for c in codes:
+            if (pdir / f"TaiwanStockPrice_{c}.json").exists() and (x := finmind.load_stock(pdir, c)) is not None:
+                yield c, x
+        return
+    P = pd.read_parquet(d.path(d.prices_file))
+    D = pd.read_parquet(d.path(d.dividends_file))
+    P["stock_id"], D["stock_id"] = P.stock_id.astype(str), D.stock_id.astype(str)
+    gp, gd = dict(tuple(P.groupby("stock_id"))), dict(tuple(D.groupby("stock_id")))
+    for c in codes:
+        if c in gp and (x := finmind.stock_returns(gp[c], gd.get(c, pd.DataFrame()))) is not None:
+            yield c, x
+
+
 def load_market(cfg: Config) -> MarketData:
     snap = twse.load_snapshot(cfg.data.path(cfg.data.snapshot_dir))
     rules = cfg.buckets.rules()
     listed = snap[snap.市場 == cfg.data.market]
-    pdir = cfg.data.path(cfg.data.prices_dir)
-    codes = [c for c in listed.index[:cfg.data.universe_top_n] if (pdir / f"TaiwanStockPrice_{c}.json").exists()]
     rets, rcaps, money, flags = {}, {}, {}, {}
-    for c in codes:
-        x = finmind.load_stock(pdir, c)
-        if x is None:
-            continue
+    for c, x in _stock_series(cfg, list(listed.index[:cfg.data.universe_top_n])):
         rets[c], rcaps[c], flags[c], money[c] = x
     bucket = rules.assign(listed.loc[list(rets), "產業"])
     panel = build_panel(rets, rcaps, listed.loc[list(rets), "市值"], bucket, cfg.buckets.order)

@@ -59,13 +59,17 @@ def load_stock(folder, code):
 
 
 def load_tri(path) -> pd.Series:
-    t = read(path)
+    t = pd.read_parquet(path) if str(path).endswith(".parquet") else read(path)
     return pd.Series(t.price.values, pd.to_datetime(t.date)).sort_index()
 
 
-def fetch(dataset: str, data_id: str, start: str, end: str, path, token: str | None = None,
-          session=None, retries: int = 6) -> bool:
-    """下載一個資料集到 path；402（超過頻率上限）時等 60 秒重試。成功回傳 True。"""
+class FetchError(RuntimeError):
+    pass
+
+
+def fetch_frame(dataset: str, data_id: str, start: str, end: str, token: str | None = None,
+                session=None, retries: int = 6, wait: float = 5) -> pd.DataFrame:
+    """下載一個資料集，回傳 DataFrame（可能是空的）；402（超過頻率上限）時等 60 秒重試，最後失敗丟出 FetchError。"""
     s = session or requests.Session()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     for _ in range(retries):
@@ -76,10 +80,20 @@ def fetch(dataset: str, data_id: str, start: str, end: str, path, token: str | N
         except (requests.RequestException, ValueError):
             js = {}
         if js.get("status") == 200:
-            Path(path).write_text(json.dumps(js, ensure_ascii=False))
-            return True
-        time.sleep(60 if js.get("status") == 402 else 5)
-    return False
+            return pd.DataFrame(js["data"])
+        time.sleep(60 if js.get("status") == 402 else wait)
+    raise FetchError(f"{dataset} {data_id} {start}–{end} 下載失敗")
+
+
+def fetch(dataset: str, data_id: str, start: str, end: str, path, token: str | None = None,
+          session=None, retries: int = 6) -> bool:
+    """下載一個資料集到 path（FinMind 原始 JSON 格式）。成功回傳 True。"""
+    try:
+        df = fetch_frame(dataset, data_id, start, end, token, session, retries)
+    except FetchError:
+        return False
+    Path(path).write_text(json.dumps(dict(status=200, data=df.to_dict("records")), ensure_ascii=False))
+    return True
 
 
 def adv(trading_money: pd.Series, window: int = 60, asof=None) -> float:

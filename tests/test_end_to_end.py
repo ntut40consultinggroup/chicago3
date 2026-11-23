@@ -131,3 +131,28 @@ def test_report_files(full, tmp_path):
     assert "**25.0%**" in book and "待補" in book and "5 桶在區間外" in book
     names = load_workbook(p["xlsx"], read_only=True).sheetnames
     assert {"0_說明", "3_政策組合", "8_重抽樣", "10_回溯三層拆解", "13_效率前緣"} <= set(names)
+
+
+# ---------- 第 5 期：從儲存層（合併 parquet）計算 ----------
+def test_store_path_reproduces_golden(tmp_path):
+    import subprocess
+    import sys
+    from chicago3.pipeline import run_policy
+    from chicago3.storage import LocalStorage
+    from chicago3.sync import materialize
+    cfg = _cfg("00981A_2027.yaml")
+    root = Path(os.environ.get("CHICAGO3_DATA", cfg.data.root))
+    tool = Path(__file__).parents[1] / "tools" / "seed_from_json.py"
+    subprocess.run([sys.executable, "-I", str(tool), f"local:{tmp_path / 'store'}", str(root / cfg.data.prices_dir),
+                    str(root / cfg.data.tri_file), str(root / cfg.data.snapshot_dir), "2026-11-20"], check=True)
+    st = LocalStorage(tmp_path / "store")
+    st.write_bytes("00981A/holdings/2026-11-20.csv", (root / cfg.data.holdings_file).read_bytes())
+    st.write_text("00981A/holdings/2026-11-20.json", "{}")
+    p = materialize(st, tmp_path / "cache", "00981A")
+    cfg.data.prices_dir = None
+    for k in ("prices_file", "dividends_file", "tri_file", "snapshot_dir", "holdings_file"):
+        setattr(cfg.data, k, p[k])
+    o = run_policy(cfg)
+    for k, v in G["policy_2027"].items():
+        assert abs(o["wP"][k] - v) < 1e-9, k
+    assert abs(o["te_fund"] - G["te_fund_now_2027"]) < 1e-12
