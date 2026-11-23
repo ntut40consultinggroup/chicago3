@@ -9,6 +9,10 @@ from pathlib import Path
 
 import altair as alt
 import pandas as pd
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))   # 用 repo 裡的 chicago3（見 streamlit_app.py）
 import streamlit as st
 
 from chicago3 import webapp

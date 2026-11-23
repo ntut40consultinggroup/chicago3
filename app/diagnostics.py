@@ -18,6 +18,10 @@ import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))   # 用 repo 裡的 chicago3（見 streamlit_app.py）
 import streamlit as st
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"

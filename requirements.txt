@@ -1,3 +1,4 @@
+# Streamlit Cloud 只在這個檔改變時重裝套件；app 會優先用 repo 裡的 chicago3 程式碼
 streamlit>=1.40
 requests>=2.31
 .
