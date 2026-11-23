@@ -11,9 +11,8 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
 URLS = {
-    "twt49u_a.json": "https://www.twse.com.tw/exchangeReport/TWT49U?response=json&strDate=20241101&endDate=20261120",
-    "twt49u_b.json": "https://www.twse.com.tw/rwd/zh/exchangeReport/TWT49U?response=json&strDate=20241101&endDate=20261120",
-    "twt49u_c.json": "https://www.twse.com.tw/exchangeReport/TWT49U?response=json&strDate=20261001&endDate=20261120",
+    "twt49u_full.json": "https://www.twse.com.tw/exchangeReport/TWT49U?response=json&startDate=20241101&endDate=20261120",
+    "twt49u_q4.json": "https://www.twse.com.tw/exchangeReport/TWT49U?response=json&startDate=20261001&endDate=20261120",
 }
 
 
