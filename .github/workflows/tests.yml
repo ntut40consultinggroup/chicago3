@@ -14,5 +14,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      - run: sudo apt-get install -y -q fonts-noto-cjk
+      - run: pip install -e ".[dev,app]"
       - run: python -m pytest -q tests
