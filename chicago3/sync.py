@@ -11,6 +11,7 @@
 """
 import io
 import json
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -18,7 +19,7 @@ import pandas as pd
 import requests
 import yaml
 
-from .data import finmind, twse
+from .data import finmind, twse, twse_daily
 from .holdings import SOURCES
 from .storage import Storage
 
@@ -146,6 +147,71 @@ def sync_prices(store: Storage, codes: list[str], start: str, end: str, token: s
     return dict(updated=done, skipped=skipped, failed=failed, rows=len(state["prices"]))
 
 
+def sync_prices_twse(store: Storage, codes: list[str], start: str, end: str, session=None, log=print,
+                     checkpoint: int = 20, pause: float = 3.0, fetch_day=None, fetch_divs=None) -> dict:
+    """用證交所資料更新股價與除權息：一個交易日一次（涵蓋全部股票），除權息一次查整段期間。
+
+    交易日曆取自報酬指數（tri.parquet，所以要先同步報酬指數）。最新一天優先用已存的當日快照，不必再查。
+    每處理 checkpoint 個交易日存一次，中斷可續傳。
+    """
+    fetch_day = fetch_day or (lambda d: twse_daily.fetch_mi_index(d, session))
+    fetch_divs = fetch_divs or (lambda a, b: twse_daily.fetch_twt49u(a, b, session))
+    tri = _read_parquet(store, f"{M}/tri.parquet", ["date"])
+    days = sorted(d for d in tri.date.astype(str) if start <= d <= end)
+    if not days:
+        raise RuntimeError("沒有交易日曆：請先同步報酬指數（tri）")
+    man = read_manifest(store)
+    through = man.get("prices_through", {})
+    want = {c: [d for d in days if d > through.get(c, "")] for c in codes}
+    need = sorted({d for ds in want.values() for d in ds})
+    log(f"需要補 {len(need)} 個交易日（{len(codes)} 檔）")
+    prices = _read_parquet(store, f"{M}/prices.parquet", PRICE_COLS)
+    new_p, snap_day = [], man.get("snapshot")
+    codeset = set(codes)
+
+    def save(upto: str):
+        nonlocal prices, new_p
+        if new_p:
+            prices = pd.concat([prices, *new_p]).drop_duplicates(["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
+            _write_parquet(store, f"{M}/prices.parquet", prices)
+            new_p = []
+        for c, ds in want.items():
+            if ds and ds[0] <= upto:
+                through[c] = max(through.get(c, ""), max(d for d in ds if d <= upto))
+        man["prices_through"] = through
+        man["price_source"] = "twse"
+        _write_manifest(store, man)
+
+    for i, d in enumerate(need):
+        if d == snap_day and store.exists(f"{M}/snapshot/{d.replace('-', '')}/exchangeReport_STOCK_DAY_ALL.json"):
+            rows = json.loads(store.read_bytes(f"{M}/snapshot/{d.replace('-', '')}/exchangeReport_STOCK_DAY_ALL.json"))
+            day = twse_daily.parse_stock_day_all(rows, d)
+        else:
+            day = fetch_day(d)
+            time.sleep(pause)
+        new_p.append(day[day.stock_id.isin(codeset)].reindex(columns=PRICE_COLS))
+        if (i + 1) % checkpoint == 0:
+            save(d)
+            log(f"交易日進度 {i + 1}/{len(need)}（已存檔）")
+    if need:
+        save(need[-1])
+    # 除權息：從上次查到的日期之後查到 end（一次）
+    dthrough = man.get("dividends_through")
+    a = (date.fromisoformat(dthrough) + timedelta(days=1)).isoformat() if dthrough else start
+    divs = _read_parquet(store, f"{M}/dividends.parquet", DIV_COLS)
+    if a <= end:
+        nd = fetch_divs(a, end).reindex(columns=DIV_COLS)
+        nd = nd[nd.stock_id.astype(str).isin(codeset)]
+        if len(nd):
+            divs = pd.concat([divs, nd]).drop_duplicates(["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
+        _write_parquet(store, f"{M}/dividends.parquet", divs)
+        man["dividends_through"] = end
+        _write_manifest(store, man)
+    elif not store.exists(f"{M}/dividends.parquet"):
+        _write_parquet(store, f"{M}/dividends.parquet", divs)
+    return dict(updated_days=len(need), codes=len(codes), dividends=len(divs), rows=len(prices), source="twse")
+
+
 def sync_tri(store: Storage, start: str, end: str, token: str | None = None, fetch=finmind.fetch_frame) -> int:
     tri = _read_parquet(store, f"{M}/tri.parquet", ["date", "stock_id", "price"])
     last = tri.date.max() if len(tri) else None
@@ -202,8 +268,15 @@ def materialize(store: Storage, cache, fund: str | None = None) -> dict:
     """把計算需要的檔案下載到 cache 資料夾，回傳可直接填進設定檔 data 區的路徑。"""
     cache = Path(cache)
     out = {}
-    for name in ("prices", "dividends", "tri"):
+    for name in ("prices", "tri"):
         out[f"{name}_file"] = str(store.download(f"{M}/{name}.parquet", cache / f"{name}.parquet"))
+    dv = cache / "dividends.parquet"                       # 同步進行中可能還沒有除權息檔：用空表代替
+    if store.exists(f"{M}/dividends.parquet"):
+        store.download(f"{M}/dividends.parquet", dv)
+    else:
+        dv.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=DIV_COLS).to_parquet(dv, index=False)
+    out["dividends_file"] = str(dv)
     snap = latest_snapshot(store)
     if snap is None:
         raise FileNotFoundError("儲存層裡還沒有證交所快照，請先執行同步")
@@ -225,8 +298,13 @@ def universe_from_snapshot(store: Storage, day: str, top_n: int, market: str = "
 
 
 def run_sync(store: Storage, registry: list[dict], start: str = "2024-11-01", top_n: int = 400,
-             token: str | None = None, steps=("snapshot", "prices", "tri", "holdings"), log=print) -> dict:
-    """每日同步：快照 → 市值前 top_n 大個股（增量）→ 報酬指數 → 各基金持股。單一步驟失敗不影響其他步驟。"""
+             token: str | None = None, steps=("snapshot", "tri", "holdings", "prices"), log=print,
+             price_source: str = "auto") -> dict:
+    """每日同步。順序：快照 → 報酬指數 → 各基金持股 → 個股（最久的放最後，前面幾步完成後網頁就能先用部分資料）。
+
+    price_source："twse"（證交所，一天一次涵蓋全部股票）、"finmind"（逐檔）、"auto"（先試證交所，連不上改 FinMind）。
+    單一步驟失敗不影響其他步驟。
+    """
     out = {}
     day = read_manifest(store).get("snapshot")
     if "snapshot" in steps:
@@ -235,9 +313,6 @@ def run_sync(store: Storage, registry: list[dict], start: str = "2024-11-01", to
     if day is None:
         raise RuntimeError("沒有快照，無法決定股票池與日期")
     out["date"] = day
-    if "prices" in steps:
-        out["prices"] = sync_prices(store, universe_from_snapshot(store, day, top_n), start, day, token, log=log)
-        log(f"個股：{out['prices']}")
     if "tri" in steps:
         out["tri"] = sync_tri(store, start, day, token)
         log(f"報酬指數新增 {out['tri']} 天")
@@ -249,4 +324,17 @@ def run_sync(store: Storage, registry: list[dict], start: str = "2024-11-01", to
             except Exception as e:     # 投信網站改版或暫時連不上：記錄下來，不讓整個同步失敗
                 out["holdings"][f["code"]] = f"失敗：{type(e).__name__}: {e}"
             log(f"持股 {f['code']}：{out['holdings'][f['code']]}")
+    if "prices" in steps:
+        codes = universe_from_snapshot(store, day, top_n)
+        if price_source in ("twse", "auto"):
+            try:
+                out["prices"] = sync_prices_twse(store, codes, start, day, log=log)
+            except (requests.RequestException, RuntimeError) as e:
+                if price_source == "twse":
+                    raise
+                log(f"證交所資料失敗（{type(e).__name__}: {e}），改用 FinMind")
+                out["prices"] = sync_prices(store, codes, start, day, token, log=log)
+        else:
+            out["prices"] = sync_prices(store, codes, start, day, token, log=log)
+        log(f"個股：{out['prices']}")
     return out

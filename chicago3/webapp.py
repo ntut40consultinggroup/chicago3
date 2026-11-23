@@ -101,3 +101,14 @@ def parse_uploaded_holdings(df: pd.DataFrame) -> pd.DataFrame:
     if (out.weight_pct < 0).any() or out.weight_pct.sum() > 150:
         raise ValueError("weight_pct 看起來不對：要是百分比（0–100），且加總不該超過 150")
     return out
+
+
+def coverage(md, cfg: Config, snapshot_day: str) -> dict:
+    """資料完整度：股票池（上市市值前 N 大）裡有股價的檔數、占市值比例、股價最後日期。"""
+    snap = md.snapshot
+    top = snap[snap.市場 == cfg.data.market].head(cfg.data.universe_top_n)
+    have = set(md.panel.R.columns)
+    share = float(top.loc[top.index.isin(have), "市值"].sum() / top.市值.sum())
+    last = md.panel.R.index.max().date().isoformat()
+    return dict(n=len(have & set(top.index)), total=len(top), mcap_share=share, last=last,
+                complete=share > 0.999 and last >= snapshot_day)

@@ -61,3 +61,38 @@ def test_requires_password_to_save(app_env):
     _btn(at, "Optimize").click().run()
     _btn(at, "⑥ 執行分析").click().run()
     assert _btn(at, "存到雲端硬碟").disabled
+
+
+def test_partial_data_flow(app_env, tmp_path):
+    """同步進行中：只有市值最大的 60 檔、股價只到 10/30，也能從頭跑到尾，並顯示「資料不完整」。"""
+    import io
+    import json
+    import shutil
+
+    import pandas as pd
+    from streamlit.testing.v1 import AppTest
+
+    from chicago3.data import twse
+    part = tmp_path / "partial"
+    shutil.copytree(app_env, part)
+    snap = twse.load_snapshot(part / "_market" / "snapshot" / "20261120")
+    top60 = list(snap[snap.市場 == "上市"].index[:60])
+    p = pd.read_parquet(part / "_market" / "prices.parquet")
+    p = p[p.stock_id.astype(str).isin(top60) & (p.date <= "2026-10-30")]
+    p.to_parquet(part / "_market" / "prices.parquet", index=False)
+    man = json.loads((part / "_market" / "manifest.json").read_text())
+    man["prices_through"] = {c: "2026-10-30" for c in top60}
+    (part / "_market" / "manifest.json").write_text(json.dumps(man))
+    os.environ["CHICAGO3_STORE"] = f"local:{part}"
+    try:
+        at = AppTest.from_file(str(ROOT / "app" / "policy_page.py"), default_timeout=300)
+        at.run()
+        _btn(at, "載入資料").click().run()
+        assert not at.exception
+        warn = [w.value for w in at.warning]
+        assert any("資料不完整" in w and "60／400" in w and "2026-10-30" in w for w in warn), warn
+        _btn(at, "Optimize").click().run()
+        _btn(at, "⑥ 執行分析").click().run()
+        assert not at.exception and not at.error and "⑦ 結果" in [h.value for h in at.header]
+    finally:
+        os.environ["CHICAGO3_STORE"] = f"local:{app_env}"

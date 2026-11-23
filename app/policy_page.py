@@ -145,10 +145,10 @@ if store is None:
     st.error("找不到資料儲存位置：請在 Secrets 設定 [google] 憑證（含 refresh_token），或設定環境變數 CHICAGO3_STORE。")
     st.stop()
 man = read_manifest(store)
-if not man.get("snapshot") or not man.get("tri_through") or not man.get("prices_through"):
-    n = len(man.get("prices_through", {}))
-    st.warning(f"雲端硬碟 chicago3.0/_market 的市場資料還沒同步完成（目前個股 {n} 檔）。"
-               "第一次同步要抓兩年資料，約 1–3 小時；完成後重新整理這一頁即可。")
+if not man.get("snapshot") or not man.get("tri_through") or not man.get("prices_through") \
+        or not store.exists("_market/prices.parquet"):
+    st.warning("雲端硬碟 chicago3.0/_market 還沒有足夠的市場資料（需要快照、報酬指數與至少一部分個股股價）。"
+               "同步開始後幾分鐘就會有報酬指數；股價每存一次檔就能先用部分資料測試。請稍後重新整理。")
     st.stop()
 
 # ① 選基金
@@ -216,7 +216,8 @@ if st.button("載入資料（已下載的會跳過）", type="primary", disabled
         md = cached_market(json.dumps([paths["prices_file"], paths["snapshot_dir"], man.get("updated_at", "")]), cfg)
         peak, trough, dd = webapp.worst_drawdown(md.panel.rB.loc[pd.Timestamp(cfg.dates.estimation[0]):])
         st.session_state.update(data=dict(paths=paths, fund=finfo, holdings_date=meta.get("date") or hdate, md=md, tpl=tpl, prm=prm,
-                                          asof=asof, stress=(peak.date(), trough.date(), dd)),
+                                          asof=asof, stress=(peak.date(), trough.date(), dd),
+                                          coverage=webapp.coverage(md, cfg, man["snapshot"])),
                                 loaded_for=code)
         try:
             st.session_state["recon"] = reconcile(cfg, md)
@@ -230,6 +231,10 @@ if not data:
     st.stop()
 f = data["fund"]
 st.success(f"{f['code']} {f['name']}｜持股日期 {data['holdings_date']}｜淨資產 {f['nav'] / 1e8:,.0f} 億元｜市場資料 {data['asof']}")
+cv = data["coverage"]
+if not cv["complete"]:
+    st.warning(f"⚠️ 資料不完整，結果僅供測試：股價目前有 {cv['n']}／{cv['total']} 檔（占股票池市值 {cv['mcap_share']:.1%}），"
+               f"最後日期 {cv['last']}。同步完成後重新整理、再按一次「載入資料」即可用完整資料。")
 if st.session_state.get("recon") is not None:
     with st.expander("②′ 勾稽：重建指標 vs 官方加權報酬指數", expanded=False):
         st.dataframe(pct(st.session_state["recon"].rename(columns=dict(period="期間", official="官方", rebuilt="重建", diff="差距", corr="相關")),

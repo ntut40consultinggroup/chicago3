@@ -36,12 +36,13 @@ def sync_main(argv):
     ap.add_argument("--funds", default="funds.yaml")
     ap.add_argument("--start", default="2024-11-01")
     ap.add_argument("--top", type=int, default=400)
-    ap.add_argument("--steps", default="snapshot,prices,tri,holdings")
+    ap.add_argument("--steps", default="snapshot,tri,holdings,prices")
+    ap.add_argument("--price-source", default="auto", choices=["auto", "twse", "finmind"])
     a = ap.parse_args(argv)
     gha = bool(os.environ.get("GITHUB_ACTIONS"))       # 在 GitHub Actions 上：結果與錯誤也寫成 annotation，方便從 API 讀取
     try:
         out = run_sync(open_storage(a.store), load_registry(a.funds), a.start, a.top, os.environ.get("FINMIND_TOKEN"),
-                       tuple(a.steps.split(",")))
+                       tuple(a.steps.split(",")), price_source=a.price_source)
     except Exception as e:
         if gha:
             print(f"::error title=sync 失敗::{type(e).__name__}: {str(e)[:900]}")
@@ -49,8 +50,7 @@ def sync_main(argv):
     print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     if gha:
         p = out.get("prices", {})
-        print(f"::notice title=sync 完成::日期 {out.get('date')}；個股更新 {p.get('updated')}、略過 {p.get('skipped')}、"
-              f"失敗 {len(p.get('failed', []))}、總筆數 {p.get('rows')}；報酬指數新增 {out.get('tri')}；持股 {out.get('holdings')}")
+        print(f"::notice title=sync 完成::日期 {out.get('date')}；個股 {p}；報酬指數新增 {out.get('tri')}；持股 {out.get('holdings')}")
     return 0
 
 

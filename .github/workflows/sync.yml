@@ -11,7 +11,7 @@ on:
     inputs:
       steps:
         description: "要執行的步驟"
-        default: "snapshot,prices,tri,holdings"
+        default: "snapshot,tri,holdings,prices"
 permissions:
   contents: read
 concurrency:
@@ -26,7 +26,7 @@ jobs:
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
       FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-      STEPS: ${{ inputs.steps || 'snapshot,prices,tri,holdings' }}
+      STEPS: ${{ inputs.steps || 'snapshot,tri,holdings,prices' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
