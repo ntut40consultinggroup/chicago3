@@ -3,7 +3,7 @@ name: daily-sync
 # 需要的 secrets（repo Settings → Secrets and variables → Actions）：
 #   GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、GOOGLE_REFRESH_TOKEN（和 Streamlit Secrets 的 [google] 相同）
 #   FINMIND_TOKEN（選填，有的話下載比較快）
-# 沒有 Google secrets 時改存到執行機的暫存資料夾，只驗證下載程式能不能動。
+# 缺少 Google secrets 時立即失敗並列出缺哪一個（不會白跑）。
 on:
   schedule:
     - cron: "35 10 * * 1-5"      # UTC 10:35 = 台北 18:35
@@ -33,12 +33,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - name: sync
+      - name: check secrets
         run: |
-          if [ -z "$GOOGLE_REFRESH_TOKEN" ]; then
-            echo "::warning::沒有設定 Google secrets，這次只存到暫存資料夾（不會寫入 Drive）"
-            STORE=local:/tmp/chicago3.0
-          else
-            STORE=gdrive
+          missing=""
+          for k in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN; do
+            if [ -z "${!k}" ]; then missing="$missing $k"; fi
+          done
+          echo "FinMind token：$([ -n "$FINMIND_TOKEN" ] && echo 有 || echo 沒有)"
+          if [ -n "$missing" ]; then
+            echo "::error title=缺少 secrets::workflow 讀不到：$missing。請到 Settings → Secrets and variables → Actions → Repository secrets 新增（名稱要完全相同，不是 Variables、也不是 Environment secrets）"
+            exit 1
           fi
-          chicago3 sync --store "$STORE" --funds funds.yaml --steps "$STEPS"
+          echo "::notice title=secrets 檢查::三個 Google secrets 都讀得到"
+      - name: sync
+        run: chicago3 sync --store gdrive --funds funds.yaml --steps "$STEPS"
