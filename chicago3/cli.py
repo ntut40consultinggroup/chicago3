@@ -38,9 +38,19 @@ def sync_main(argv):
     ap.add_argument("--top", type=int, default=400)
     ap.add_argument("--steps", default="snapshot,prices,tri,holdings")
     a = ap.parse_args(argv)
-    out = run_sync(open_storage(a.store), load_registry(a.funds), a.start, a.top, os.environ.get("FINMIND_TOKEN"),
-                   tuple(a.steps.split(",")))
+    gha = bool(os.environ.get("GITHUB_ACTIONS"))       # 在 GitHub Actions 上：結果與錯誤也寫成 annotation，方便從 API 讀取
+    try:
+        out = run_sync(open_storage(a.store), load_registry(a.funds), a.start, a.top, os.environ.get("FINMIND_TOKEN"),
+                       tuple(a.steps.split(",")))
+    except Exception as e:
+        if gha:
+            print(f"::error title=sync 失敗::{type(e).__name__}: {str(e)[:900]}")
+        raise
     print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
+    if gha:
+        p = out.get("prices", {})
+        print(f"::notice title=sync 完成::日期 {out.get('date')}；個股更新 {p.get('updated')}、略過 {p.get('skipped')}、"
+              f"失敗 {len(p.get('failed', []))}、總筆數 {p.get('rows')}；報酬指數新增 {out.get('tri')}；持股 {out.get('holdings')}")
     return 0
 
 
