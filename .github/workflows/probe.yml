@@ -1,0 +1,28 @@
+name: probe-site
+# 手動觸發：在 GitHub 的雲端主機上探測網站結構或執行下載測試，結果存成 artifact。
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "要執行的指令（在 repo 根目錄執行）"
+        required: true
+        default: "python tools/probe_site.py out https://www.ezmoney.com.tw/ETF 00981A"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests pandas openpyxl xlrd
+      - run: mkdir -p out && ${{ inputs.command }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-out
+          path: out
+          retention-days: 3
