@@ -1,0 +1,70 @@
+# 00981A 主動統一台股增長：2025 年政策組合（重現講義第 4 節回溯）
+# 資料路徑相對於 data.root；可用環境變數 CHICAGO3_DATA 或 --data-root 覆蓋。
+
+fund:
+  code: 00981A
+  name: 主動統一台股增長
+  nav: 2.752e11              # 課程用 2026-11-13 規模；11/20 實際約 2,118 億（網頁版會自動帶入最新值）
+
+data:
+  root: /home/claude/data
+  prices_dir: saa_20261122
+  snapshot_dir: daily_20261120
+  tri_file: hist_taiex_20261122/tri.json
+  holdings_file: holdings_00981A_20261120.csv
+  market: 上市
+  universe_top_n: 400
+
+dates:
+  asof: 2025-11-20
+  estimation: [2024-11-20, 2025-11-20]
+  capacity_asof: 2026-11-20   # 課程用現在的容量（講義第 7 節「後見之明」限制），為了重現而保留
+  reconcile:
+    - [2024-11-20, 2025-11-20]
+    - [2025-11-20, 2026-11-20]
+
+buckets:
+  order: [台積電, 其他半導體, AI硬體零組件, 電腦與伺服器, 其他電子, 金融保險, 傳產與其他]
+  default: 傳產與其他
+  single_stock:
+    台積電: "2330"
+  overrides:
+    AI硬體零組件: ["3017", "2059", "6805", "8210", "3324", "3653"]   # 散熱與機構件
+  by_industry:
+    AI硬體零組件: [電子零組件]
+    其他半導體: [半導體]
+    電腦與伺服器: [電腦及週邊設備]
+    其他電子: [通信網路, 光電, 其他電子, 電子通路, 資訊服務, 數位雲端]
+    金融保險: [金融保險]
+
+constraints:
+  single_cap: 0.10
+  single_cap_overrides: {"2330": 0.25}
+  shares_cap: 0.10
+  liquidity: {days: 10, participation: 0.20, adv_window: 60, compare_days: [3]}
+  bucket_upper: {台積電: 0.25}
+  fixed_buckets: [台積電]
+  max_tilt: 0.15
+
+model:
+  annualization: 250
+  covariance: {method: ledoit_wolf}
+  erp: 0.06
+  tau: 0.05
+  ir: 0.5
+
+budget:
+  total_te: 0.15
+  strategic_share: 0.5
+
+views:
+  - {bucket: AI硬體零組件, excess: 0.05, confidence: 0.50}
+
+bands:
+  te_increment: 0.01
+  clip: [0.02, 0.10]
+  half_weight_cap: true
+  no_up: [台積電]
+
+reconcile:
+  tolerance: 0.04
