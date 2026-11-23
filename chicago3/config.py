@@ -117,6 +117,47 @@ class Reconcile(BaseModel):
     tolerance: float = Field(0.04, gt=0, description="重建指標與官方指數單期報酬差距上限")
 
 
+class Bootstrap(BaseModel):
+    n: int = Field(300, gt=0)
+    block_days: int = Field(20, gt=1)
+    seed: int = 20261122
+
+
+class ViewGrid(BaseModel):
+    bucket: str
+    excess: list[float] = [0.0, 0.025, 0.05, 0.075, 0.10]
+    confidence: list[float] = [0.25, 0.5, 0.75]
+
+
+class Period(BaseModel):
+    name: str
+    start: date
+    end: date
+
+
+class Robustness(BaseModel):
+    bootstrap: Bootstrap | None = Bootstrap()
+    view_grid: ViewGrid | None = None
+    stress: list[Period] = []
+
+
+class PolicyVariant(BaseModel):
+    """回溯用的政策：在主設定上換掉日期與觀點。"""
+    name: str
+    asof: date
+    estimation: tuple[date, date]
+    capacity_asof: date | None = None
+    views: list[ViewCfg] = []
+
+
+class Attribution(BaseModel):
+    start: date
+    end: date
+    fund_price_file: str           # FinMind TaiwanStockPrice 格式
+    fund_dividend_file: str        # FinMind TaiwanStockDividendResult 格式
+    policies: list[PolicyVariant]  # 第一個是主要政策（逐月表用它）
+
+
 class Config(BaseModel):
     fund: Fund
     data: Data
@@ -128,12 +169,18 @@ class Config(BaseModel):
     views: list[ViewCfg] = []
     bands: Bands = Bands()
     reconcile: Reconcile = Reconcile()
+    robustness: Robustness = Robustness()
+    attribution: Attribution | None = None
 
     @model_validator(mode="after")
     def _buckets_exist(self):
         known = set(self.buckets.order)
         used = {v.bucket for v in self.views} | set(self.constraints.bucket_upper) | set(self.constraints.fixed_buckets) \
             | set(self.bands.no_up)
+        if self.robustness.view_grid:
+            used.add(self.robustness.view_grid.bucket)
+        if self.attribution:
+            used |= {v.bucket for p in self.attribution.policies for v in p.views}
         if bad := used - known:
             raise ValueError(f"設定裡用到不存在的桶：{bad}")
         return self

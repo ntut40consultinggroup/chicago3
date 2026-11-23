@@ -67,3 +67,29 @@ bands:
 
 reconcile:
   tolerance: 0.04
+
+robustness:
+  bootstrap: {n: 300, block_days: 20, seed: 20261122}
+  view_grid:
+    bucket: AI硬體零組件
+    excess: [0.0, 0.025, 0.05, 0.075, 0.10]
+    confidence: [0.25, 0.5, 0.75]
+  stress:
+    - {name: AI衝擊, start: 2026-10-05, end: 2026-11-20}   # 從 10/05 高點收盤起算
+
+attribution:                 # 回溯：如果 2025-11 就有政策組合
+  start: 2025-11-20
+  end: 2026-11-20
+  fund_price_file: cycle_20261122/TaiwanStockPrice_00981A.json
+  fund_dividend_file: cycle_20261122/div.json
+  policies:
+    - name: 2025政策（溫和觀點）
+      asof: 2025-11-20
+      estimation: [2024-11-20, 2025-11-20]
+      capacity_asof: 2026-11-20    # 課程用現在的容量（講義第 7 節列為限制）
+      views: [{bucket: AI硬體零組件, excess: 0.05, confidence: 0.50}]
+    - name: 強烈觀點
+      asof: 2025-11-20
+      estimation: [2024-11-20, 2025-11-20]
+      capacity_asof: 2026-11-20
+      views: [{bucket: AI硬體零組件, excess: 0.15, confidence: 0.75}]

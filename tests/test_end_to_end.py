@@ -83,3 +83,51 @@ def test_reconcile_failure_is_loud():
     cfg.reconcile.tolerance = 0.01      # 實際差距約 2–3%，應該失敗
     with pytest.raises(ReconcileError):
         reconcile(cfg, load_market(cfg))
+
+
+# ---------- 第 3 期：穩健性、歸因、監控、報告 ----------
+@pytest.fixture(scope="module")
+def full():
+    from chicago3.pipeline import run_all
+    return run_all(_cfg("00981A_2027.yaml"))
+
+
+def test_bootstrap_matches_lecture(full):
+    b = full["robustness"]["bootstrap"]
+    lo, hi = G["resample_ai_p5_p95"]
+    assert abs(b.loc["AI硬體零組件", "p5"] - lo) < 1e-6 and abs(b.loc["AI硬體零組件", "p95"] - hi) < 1e-6
+
+
+def test_stress_returns_match_lecture(full):
+    t = full["robustness"]["stress"]["AI衝擊"][0].set_index("portfolio").return_
+    for k in ("benchmark", "neutral", "policy", "fund"):
+        assert abs(t[k] - G["stress"][k]) < 1e-9, k
+
+
+def test_three_tier_matches_lecture(full):
+    t = full["attribution"]["tiers"]
+    g = G["tiers_2026"]
+    assert abs(t["active"] - g["active"]) < 1e-9 and abs(t["structural"] - g["structural"]) < 1e-9
+    mild, strong = t["policies"]["2025政策（溫和觀點）"], t["policies"]["強烈觀點"]
+    assert abs(mild["strategic"] - g["strategic"]) < 1e-9 and abs(mild["execution"] - g["execution"]) < 1e-9
+    assert abs(strong["strategic"] - g["strategic_strong"]) < 1e-9 and abs(strong["execution"] - g["execution_strong"]) < 1e-9
+
+
+def test_sensitivity_and_turnover(full):
+    s = full["robustness"]["sensitivity"]
+    row = s[(s.excess == 0.10) & (s.confidence == 0.75)].iloc[0]
+    assert abs(row["AI硬體零組件"] - 0.203) < 0.001                  # 講義 3.4：觀點 10%／信心 75% → 20.3%
+    assert abs(full["monitor"]["turnover_to_policy"] - 0.39) < 0.005  # 講義 §5：單邊換手約 39%
+
+
+def test_report_files(full, tmp_path):
+    from openpyxl import load_workbook
+    from chicago3.pipeline import write_report
+    p = write_report(full, tmp_path)
+    assert all(v.exists() and v.stat().st_size > 1000 for v in p.values())
+    book = p["book"].read_text(encoding="utf-8")
+    for h in [f"## {i}." for i in range(1, 10)]:
+        assert h in book
+    assert "**25.0%**" in book and "待補" in book and "5 桶在區間外" in book
+    names = load_workbook(p["xlsx"], read_only=True).sheetnames
+    assert {"0_說明", "3_政策組合", "8_重抽樣", "10_回溯三層拆解", "13_效率前緣"} <= set(names)

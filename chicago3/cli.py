@@ -2,6 +2,7 @@
 
   reconcile  重建指標並和官方加權報酬指數勾稽（差距超過門檻就失敗）
   policy     年度 SAA：容量、中性、均衡與觀點、政策、區間、TE 預算、基金現況；結果寫到 --out
+  report     policy 加上穩健性、回溯歸因、監控；輸出試算表、政策組合書、效率前緣圖、區間圖
 """
 import argparse
 import json
@@ -11,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import load_config
-from .pipeline import ReconcileError, load_market, reconcile, run_policy
+from .pipeline import ReconcileError, load_market, reconcile, run_all, run_policy, write_report
 
 pd.set_option("display.width", 160)
 
@@ -27,7 +28,7 @@ def _policy_table(o) -> pd.DataFrame:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="chicago3", description="Chicago 3.0 SAA 政策組合工具")
-    ap.add_argument("command", choices=["reconcile", "policy"])
+    ap.add_argument("command", choices=["reconcile", "policy", "report"])
     ap.add_argument("config")
     ap.add_argument("--data-root")
     ap.add_argument("--out", default="out")
@@ -37,7 +38,7 @@ def main(argv=None):
         if a.command == "reconcile":
             print(reconcile(cfg, load_market(cfg)).round(4).to_string(index=False))
             return 0
-        o = run_policy(cfg)
+        o = run_all(cfg) if a.command == "report" else run_policy(cfg)
     except ReconcileError as e:
         print(f"勾稽失敗：{e}", file=sys.stderr)
         return 2
@@ -57,6 +58,9 @@ def main(argv=None):
         print(f"基金事前 TE {o['te_fund']:.4f}、β {o['beta_fund']:.2f}；預期主動 "
               f"{o['fund_expected']['expected_active']:.4f} = Beta 溢酬 {o['fund_expected']['beta_premium']:.4f}"
               f" ＋ 觀點 α {o['fund_expected']['view_alpha']:.4f}")
+    if a.command == "report":
+        for k, p in write_report(o, out).items():
+            print(f"{k}: {p}")
     print("輸出：", out.resolve())
     return 0
 

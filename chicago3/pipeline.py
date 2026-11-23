@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from . import bands, budget, capacity, equilibrium, neutral, optimize, risk, views
+from . import attribution, bands, budget, capacity, equilibrium, monitor, neutral, optimize, risk, robustness, views
 from .config import Config
 from .data import finmind, twse
 from .panel import Panel, build_panel, period_return
@@ -112,3 +112,105 @@ def run_policy(cfg: Config, md: MarketData | None = None, strict_reconcile: bool
         out.update(wF=wF, fund_status=bands.band_status(wF, bd), te_fund=risk.te((wF - wB).values, S),
                    beta_fund=risk.beta(wF, wB, S), fund_expected=equilibrium.decompose_expected_active(bl.Pi, bl.alpha, wF, wB))
     return out
+
+
+def _solver(cfg: Config, wB: pd.Series, wN: pd.Series, te_cap: float, cap: pd.Series):
+    """綁好中性、預算、上限的 solve(S, views) → 政策權重。"""
+    c, m = cfg.constraints, cfg.model
+
+    def solve(S, vs):
+        bl = views.black_litterman(S, wB, vs, erp=m.erp, tau=m.tau)
+        return optimize.solve_policy(bl.alpha, S, wN, te_cap=te_cap, ir=m.ir, upper=cap, max_tilt=c.max_tilt,
+                                     fixed=tuple(c.fixed_buckets))
+    return solve
+
+
+def _cov_fn(cfg: Config):
+    m = cfg.model
+    kw = dict(halflife=m.covariance.ewma_halflife) if m.covariance.method == "ewma" else {}
+    return lambda R: risk.estimate_cov(R, m.covariance.method, m.annualization, **kw)
+
+
+def run_robustness(cfg: Config, o: dict) -> dict:
+    rb, out = cfg.robustness, {}
+    solve = _solver(cfg, o["wB"], o["wN"], o["te"]["strategic_cap"], o["capacity"])
+    if rb.view_grid:
+        g = rb.view_grid
+        out["sensitivity"] = robustness.view_sensitivity(o["S"], solve, o["wN"], g.bucket, g.excess, g.confidence,
+                                                         lambda a: risk.te(a, o["S"]))
+    if rb.bootstrap:
+        b = rb.bootstrap
+        draws = robustness.block_bootstrap(o["R"][cfg.buckets.order], _cov_fn(cfg), solve, cfg.view_objects(),
+                                           n=b.n, block=b.block_days, seed=b.seed)
+        out["bootstrap"] = robustness.bootstrap_summary(draws, o["wP"], o["bands"])
+    ports = {"benchmark": o["wB"], "neutral": o["wN"], "policy": o["wP"]}
+    if "wF" in o:
+        ports["fund"] = o["wF"]
+    out["stress"] = {p.name: robustness.stress_replay(o["market"].panel.RB, p.start, p.end, ports)
+                     for p in rb.stress}
+    return out
+
+
+def run_attribution(cfg: Config, md: MarketData) -> dict | None:
+    at = cfg.attribution
+    if at is None:
+        return None
+    tilts, variants = {}, {}
+    for p in at.policies:
+        v = cfg.model_copy(deep=True)
+        v.dates.asof, v.dates.estimation, v.dates.capacity_asof = p.asof, p.estimation, p.capacity_asof
+        v.views, v.data.holdings_file = p.views, None
+        r = run_policy(v, md, strict_reconcile=False)
+        tilts[p.name] = r["wP"] - r["wN"]
+        variants[p.name] = r
+    panel = md.panel
+    dates = panel.R.index[(panel.R.index > pd.Timestamp(at.start)) & (panel.R.index <= pd.Timestamp(at.end))]
+    upper = variants[at.policies[0].name]["upper"]
+    tg = attribution.monthly_targets(panel.WB, dates, upper, tilts)
+    R = panel.RB.loc[dates]
+    rets = {k: attribution.rebalanced_returns(R, t, dates) for k, t in tg.items()}
+    r_off = md.tri.pct_change().reindex(dates)
+    rF = attribution.fund_market_returns(finmind.read(cfg.data.path(at.fund_price_file)),
+                                         finmind.read(cfg.data.path(at.fund_dividend_file))).reindex(dates)
+    pols = {k: rets[k] for k in tilts}
+    main = at.policies[0].name
+    return dict(variants=variants, tilts=tilts, returns=rets, fund=rF, official=r_off,
+                tiers=attribution.three_tier(rF, r_off, rets["benchmark"], rets["neutral"], pols),
+                monthly=attribution.monthly_three_tier(rF, r_off, rets["benchmark"], rets["neutral"], rets[main]))
+
+
+def run_all(cfg: Config, strict_reconcile: bool = True) -> dict:
+    """年度 SAA 全套：政策＋穩健性＋監控＋回溯歸因。"""
+    md = load_market(cfg)
+    o = run_policy(cfg, md, strict_reconcile)
+    o["robustness"] = run_robustness(cfg, o)
+    if "wF" in o:
+        o["monitor"] = monitor.band_report(o["wF"], o["wP"], o["bands"])
+    o["attribution"] = run_attribution(cfg, md)
+    o["frontier"] = optimize.frontier(o["bl"].mu, o["S"], o["wB"], o["upper"], kind="active")
+    pts = {"benchmark": o["wB"], "neutral": o["wN"], "policy": o["wP"]}
+    if "wF" in o:
+        pts["fund"] = o["wF"]
+    o["frontier_points"] = {k: optimize.portfolio_stats(o["bl"].mu, o["S"], w, o["wB"]) for k, w in pts.items()}
+    return o
+
+
+def write_report(o: dict, out_dir) -> dict:
+    """輸出試算表、政策組合書、效率前緣圖、區間圖。回傳 {種類: 路徑}。"""
+    from pathlib import Path
+    from .report import charts, policy_book, xlsx
+    cfg = o["config"]
+    d = Path(out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    stem = f"{cfg.fund.code}_{cfg.dates.asof.year + 1}"
+    paths = dict(xlsx=d / f"{stem}_政策組合.xlsx", book=d / f"{stem}_政策組合書.md",
+                 frontier=d / f"{stem}_效率前緣.png", bands=d / f"{stem}_區間.png")
+    xlsx.write_workbook(o, paths["xlsx"])
+    paths["book"].write_text(policy_book.policy_book(o), encoding="utf-8")
+    charts.frontier_chart(o["frontier"], o["frontier_points"], cfg.budget.total_te, paths["frontier"],
+                          title=f"{cfg.fund.code} 追蹤誤差前緣（{cfg.dates.asof}）")
+    t = pd.DataFrame(dict(policy=o["wP"], band_lower=o["bands"].lower, band_upper=o["bands"].upper))
+    if "wF" in o:
+        t["fund"] = o["wF"]
+    charts.bands_chart(t, paths["bands"], title=f"{cfg.fund.code} 政策目標、區間與基金現況")
+    return paths
