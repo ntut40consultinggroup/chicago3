@@ -1,6 +1,6 @@
 [project]
 name = "chicago3"
-version = "0.0.1"
+version = "0.1.0"
 description = "Chicago 3.0：股票基金的策略性資產配置（Black–Litterman＋追蹤誤差最佳化）"
 requires-python = ">=3.11"
 dependencies = [
