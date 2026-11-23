@@ -20,7 +20,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests pandas openpyxl xlrd
-      - run: mkdir -p out && ${{ inputs.command }} 2>&1 | tee out/_stdout.txt
+      - name: run command
+        env:
+          CMD: ${{ inputs.command }}
+        run: |
+          mkdir -p out
+          set +e
+          bash -c "$CMD" > out/_stdout.txt 2>&1
+          echo "exit code: $?" >> out/_stdout.txt
+          cat out/_stdout.txt
       - name: push results to probe-results branch
         if: always()
         run: |
