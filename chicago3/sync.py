@@ -128,6 +128,7 @@ def sync_prices(store: Storage, codes: list[str], start: str, end: str, token: s
         _write_parquet(store, f"{M}/prices.parquet", prices)
     if new_d:
         divs = pd.concat([divs, *new_d]).drop_duplicates(["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
+    if new_d or not store.exists(f"{M}/dividends.parquet"):     # 沒有任何除權息也要有檔（可以是空的）
         _write_parquet(store, f"{M}/dividends.parquet", divs)
     man["prices_through"] = through
     man["prices_failed"] = failed

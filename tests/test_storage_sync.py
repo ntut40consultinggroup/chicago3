@@ -132,6 +132,7 @@ def test_sync_prices_incremental(tmp_path):
     r = sync.sync_prices(st, ["1101", "2330", "2454"], "2026-01-01", "2026-02-06", fetch=f, log=lambda *_: None)
     starts = {c: s for d, c, s, e in f.calls if d == "TaiwanStockPrice"}
     assert starts == {"1101": "2026-02-01", "2330": "2026-02-01", "2454": "2026-01-01"}   # 舊的只補缺，新的從頭
+    assert st.exists("_market/dividends.parquet")            # 沒有除權息也要有檔
     p = pd.read_parquet(io.BytesIO(st.read_bytes("_market/prices.parquet")))
     assert not p.duplicated(["stock_id", "date"]).any() and p.date.max() == "2026-02-06"
     f.calls.clear()
