@@ -95,13 +95,31 @@ def latest_snapshot(store: Storage) -> str | None:
 
 # ---------- 個股日價與除權息（增量） ----------
 def sync_prices(store: Storage, codes: list[str], start: str, end: str, token: str | None = None,
-                fetch=finmind.fetch_frame, log=print) -> dict:
-    """每檔只下載「最後日期之後」到 end 的資料；新加入的代號從 start 開始抓。回傳摘要。"""
-    prices = _read_parquet(store, f"{M}/prices.parquet", PRICE_COLS)
-    divs = _read_parquet(store, f"{M}/dividends.parquet", DIV_COLS)
+                fetch=finmind.fetch_frame, log=print, checkpoint: int = 50) -> dict:
+    """每檔只下載「最後日期之後」到 end 的資料；新加入的代號從 start 開始抓。回傳摘要。
+
+    每處理 checkpoint 檔就存一次（含 manifest），中途被中斷（例如超過時間上限）時，下次會從斷點接著抓。
+    """
+    state = dict(prices=_read_parquet(store, f"{M}/prices.parquet", PRICE_COLS),
+                 divs=_read_parquet(store, f"{M}/dividends.parquet", DIV_COLS), new_p=[], new_d=[])
     man = read_manifest(store)
     through = man.get("prices_through", {})          # 代號 → 已抓到哪一天（價格與除權息一起）
-    new_p, new_d, failed, done, skipped = [], [], [], 0, 0
+    failed, done, skipped = [], 0, 0
+
+    def save():
+        if state["new_p"]:
+            state["prices"] = pd.concat([state["prices"], *state["new_p"]]).drop_duplicates(
+                ["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
+            _write_parquet(store, f"{M}/prices.parquet", state["prices"])
+        if state["new_d"]:
+            state["divs"] = pd.concat([state["divs"], *state["new_d"]]).drop_duplicates(
+                ["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
+        if state["new_d"] or not store.exists(f"{M}/dividends.parquet"):     # 沒有任何除權息也要有檔（可以是空的）
+            _write_parquet(store, f"{M}/dividends.parquet", state["divs"])
+        state["new_p"], state["new_d"] = [], []
+        man["prices_through"], man["prices_failed"] = through, failed
+        _write_manifest(store, man)
+
     for i, c in enumerate(codes):
         last = through.get(c)
         if last and last >= end:
@@ -116,24 +134,16 @@ def sync_prices(store: Storage, codes: list[str], start: str, end: str, token: s
             log(f"失敗：{e}")
             continue
         if len(p):
-            new_p.append(p.reindex(columns=PRICE_COLS))
+            state["new_p"].append(p.reindex(columns=PRICE_COLS))
         if len(d):
-            new_d.append(d.reindex(columns=DIV_COLS))
+            state["new_d"].append(d.reindex(columns=DIV_COLS))
         through[c] = end
         done += 1
-        if (i + 1) % 50 == 0:
-            log(f"個股進度 {i + 1}/{len(codes)}")
-    if new_p:
-        prices = pd.concat([prices, *new_p]).drop_duplicates(["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
-        _write_parquet(store, f"{M}/prices.parquet", prices)
-    if new_d:
-        divs = pd.concat([divs, *new_d]).drop_duplicates(["stock_id", "date"], keep="last").sort_values(["stock_id", "date"])
-    if new_d or not store.exists(f"{M}/dividends.parquet"):     # 沒有任何除權息也要有檔（可以是空的）
-        _write_parquet(store, f"{M}/dividends.parquet", divs)
-    man["prices_through"] = through
-    man["prices_failed"] = failed
-    _write_manifest(store, man)
-    return dict(updated=done, skipped=skipped, failed=failed, rows=len(prices))
+        if done % checkpoint == 0:
+            save()
+            log(f"個股進度 {i + 1}/{len(codes)}（已存檔）")
+    save()
+    return dict(updated=done, skipped=skipped, failed=failed, rows=len(state["prices"]))
 
 
 def sync_tri(store: Storage, start: str, end: str, token: str | None = None, fetch=finmind.fetch_frame) -> int:

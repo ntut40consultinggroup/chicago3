@@ -198,3 +198,24 @@ def test_registry_loads():
 
 def test_roc_date():
     assert sync._roc_to_iso("1151120") == "2026-11-20"
+
+
+def test_sync_prices_checkpoint_resume(tmp_path):
+    """中途中斷：已存檔的部分保留，下次從斷點接著抓。"""
+    st = LocalStorage(tmp_path)
+    codes = [f"{1000 + i}" for i in range(7)]
+
+    class Boom(FakeFinMind):
+        def __call__(self, dataset, code, start, end, token=None):
+            if code == "1005":
+                raise KeyboardInterrupt          # 模擬被強制中斷（不是一般下載失敗）
+            return super().__call__(dataset, code, start, end, token)
+
+    with pytest.raises(KeyboardInterrupt):
+        sync.sync_prices(st, codes, "2026-01-01", "2026-01-09", fetch=Boom(), log=lambda *_: None, checkpoint=2)
+    man = sync.read_manifest(st)
+    assert sorted(man["prices_through"]) == ["1000", "1001", "1002", "1003"]      # 每 2 檔存一次，1004 還沒存
+    f = FakeFinMind()
+    r = sync.sync_prices(st, codes, "2026-01-01", "2026-01-09", fetch=f, log=lambda *_: None, checkpoint=2)
+    assert r["skipped"] == 4 and r["updated"] == 3
+    assert {c for d, c, s, e in f.calls} == {"1004", "1005", "1006"}
