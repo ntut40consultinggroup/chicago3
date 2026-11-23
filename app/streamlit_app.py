@@ -92,6 +92,14 @@ def upload_text(tok, parent, name, text):
 
 with tab_drive:
     cfg = dict(st.secrets.get("google", {}))
+    # 公開 app：Drive 功能要先輸入密碼（Secrets 的 app_password）。沒設密碼就整個關閉，避免任何人寫入你的 Drive。
+    pw = st.secrets.get("app_password", "")
+    if not pw:
+        st.warning("尚未設定 app_password，Drive 功能已關閉。請在 Secrets 加一行 app_password = \"...\"。")
+        st.stop()
+    if st.text_input("管理密碼", type="password") != pw:
+        st.info("輸入管理密碼後才能使用 Drive 功能。")
+        st.stop()
     if not cfg.get("client_id"):
         st.info("尚未設定 [google] client_id／client_secret（見 docs/第0期_設定指南.md）。")
     elif not cfg.get("refresh_token"):
