@@ -34,9 +34,11 @@ def build_panel(rets: dict, rcaps: dict, mcap_anchor: pd.Series, bucket: pd.Seri
     """rets、rcaps：代號 → 日報酬／市值變化率序列；mcap_anchor：代號 → 最後一天的收盤市值。"""
     R = pd.DataFrame(rets).sort_index()
     codes = list(R.columns)
-    G = (1 + pd.DataFrame(rcaps).sort_index().reindex(R.index)[codes]).cumprod()
+    RC = pd.DataFrame(rcaps).sort_index().reindex(R.index)[codes]
+    G = (1 + RC).cumprod()
     MC = G / G.iloc[-1] * mcap_anchor.reindex(codes)
     prev = MC.shift(1)
+    prev.iloc[0] = MC.iloc[0] / (1 + RC.iloc[0])   # 第一天也要有前一日市值，否則當天報酬會被當成 0
     R = R.fillna(0.0)
     bk = bucket.reindex(codes)
     rB = (prev.div(prev.sum(axis=1), axis=0).fillna(0) * R).sum(axis=1)

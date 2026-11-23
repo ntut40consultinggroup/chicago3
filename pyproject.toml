@@ -27,3 +27,5 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["chicago3*"]
+[tool.pytest.ini_options]
+pythonpath = ["tests"]
